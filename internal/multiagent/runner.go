@@ -223,7 +223,7 @@ func RunDeepAgent(
 				return nil, fmt.Errorf("子代理 %q 工具: %w", id, err)
 			}
 
-			subToolsForCfg, subPre, err := prependEinoMiddlewares(ctx, &ma.EinoMiddleware, einoMWSub, subTools, einoLoc, skillsRoot, conversationID, logger)
+			subToolsForCfg, subPre, subToolSearchActive, err := prependEinoMiddlewares(ctx, &ma.EinoMiddleware, einoMWSub, subTools, einoLoc, skillsRoot, conversationID, logger)
 			if err != nil {
 				return nil, fmt.Errorf("子代理 %q eino 中间件: %w", id, err)
 			}
@@ -260,23 +260,16 @@ func RunDeepAgent(
 				subHandlers = append(subHandlers, teleMw)
 			}
 
-			subInstrFinal := injectToolNamesOnlyInstruction(ctx, instr, subTools)
+			subInstrFinal := injectToolNamesOnlyInstruction(ctx, instr, subTools, subToolSearchActive)
 			if logger != nil {
 				subNames := collectToolNames(ctx, subTools)
 				mountedNames := collectToolNames(ctx, subToolsForCfg)
-				hasToolSearch := false
-				for _, n := range subNames {
-					if strings.EqualFold(strings.TrimSpace(n), "tool_search") {
-						hasToolSearch = true
-						break
-					}
-				}
 				logger.Info("eino tool-name injection",
 					zap.String("scope", "sub_agent"),
 					zap.String("agent", id),
 					zap.Int("tool_names", len(subNames)),
 					zap.Int("mounted_tool_names", len(mountedNames)),
-					zap.Bool("has_tool_search", hasToolSearch),
+					zap.Bool("tool_search_middleware", subToolSearchActive),
 				)
 			}
 			sa, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
@@ -341,28 +334,21 @@ func RunDeepAgent(
 	if err != nil {
 		return nil, err
 	}
-	mainToolsForCfg, mainOrchestratorPre, err := prependEinoMiddlewares(ctx, &ma.EinoMiddleware, einoMWMain, mainTools, einoLoc, skillsRoot, conversationID, logger)
+	mainToolsForCfg, mainOrchestratorPre, mainToolSearchActive, err := prependEinoMiddlewares(ctx, &ma.EinoMiddleware, einoMWMain, mainTools, einoLoc, skillsRoot, conversationID, logger)
 	if err != nil {
 		return nil, err
 	}
 
-	orchInstruction = injectToolNamesOnlyInstruction(ctx, orchInstruction, mainTools)
+	orchInstruction = injectToolNamesOnlyInstruction(ctx, orchInstruction, mainTools, mainToolSearchActive)
 	if logger != nil {
 		mainNames := collectToolNames(ctx, mainTools)
 		mountedNames := collectToolNames(ctx, mainToolsForCfg)
-		hasToolSearch := false
-		for _, n := range mainNames {
-			if strings.EqualFold(strings.TrimSpace(n), "tool_search") {
-				hasToolSearch = true
-				break
-			}
-		}
 		logger.Info("eino tool-name injection",
 			zap.String("scope", "orchestrator"),
 			zap.String("orchestration", orchMode),
 			zap.Int("tool_names", len(mainNames)),
 			zap.Int("mounted_tool_names", len(mountedNames)),
-			zap.Bool("has_tool_search", hasToolSearch),
+			zap.Bool("tool_search_middleware", mainToolSearchActive),
 		)
 	}
 

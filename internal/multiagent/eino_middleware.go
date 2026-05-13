@@ -161,6 +161,8 @@ func buildReductionMiddleware(ctx context.Context, mw config.MultiAgentEinoMiddl
 }
 
 // prependEinoMiddlewares returns handlers to prepend (outermost first) and optionally replaces tools when tool_search is used.
+// toolSearchActive is true when the toolsearch middleware was mounted (dynamic tools split off); callers should pass this to
+// injectToolNamesOnlyInstruction — tool_search is not part of the pre-middleware tools list, so name-scanning alone cannot detect it.
 func prependEinoMiddlewares(
 	ctx context.Context,
 	mw *config.MultiAgentEinoMiddlewareConfig,
@@ -170,16 +172,16 @@ func prependEinoMiddlewares(
 	skillsRoot string,
 	conversationID string,
 	logger *zap.Logger,
-) (outTools []tool.BaseTool, extraHandlers []adk.ChatModelAgentMiddleware, err error) {
+) (outTools []tool.BaseTool, extraHandlers []adk.ChatModelAgentMiddleware, toolSearchActive bool, err error) {
 	if mw == nil {
-		return tools, nil, nil
+		return tools, nil, false, nil
 	}
 	outTools = tools
 
 	if mw.PatchToolCallsEffective() {
 		patchMW, perr := patchtoolcalls.New(ctx, &patchtoolcalls.Config{})
 		if perr != nil {
-			return nil, nil, fmt.Errorf("patchtoolcalls: %w", perr)
+			return nil, nil, false, fmt.Errorf("patchtoolcalls: %w", perr)
 		}
 		extraHandlers = append(extraHandlers, patchMW)
 	}
@@ -190,7 +192,7 @@ func prependEinoMiddlewares(
 		} else {
 			redMW, rerr := buildReductionMiddleware(ctx, *mw, conversationID, einoLoc, logger)
 			if rerr != nil {
-				return nil, nil, rerr
+				return nil, nil, false, rerr
 			}
 			extraHandlers = append(extraHandlers, redMW)
 		}
@@ -209,10 +211,11 @@ func prependEinoMiddlewares(
 		if split && len(dynamic) > 0 {
 			ts, terr := toolsearch.New(ctx, &toolsearch.Config{DynamicTools: dynamic})
 			if terr != nil {
-				return nil, nil, fmt.Errorf("toolsearch: %w", terr)
+				return nil, nil, false, fmt.Errorf("toolsearch: %w", terr)
 			}
 			extraHandlers = append(extraHandlers, ts)
 			outTools = static
+			toolSearchActive = true
 			if logger != nil {
 				logger.Info("eino middleware: tool_search enabled",
 					zap.Int("static_tools", len(static)),
@@ -233,12 +236,12 @@ func prependEinoMiddlewares(
 			}
 			baseDir := filepath.Join(skillsRoot, rel, sanitizeEinoPathSegment(conversationID))
 			if mk := os.MkdirAll(baseDir, 0o755); mk != nil {
-				return nil, nil, fmt.Errorf("plantask mkdir: %w", mk)
+				return nil, nil, toolSearchActive, fmt.Errorf("plantask mkdir: %w", mk)
 			}
 			ptBE := &localPlantaskBackend{Local: einoLoc}
 			pt, perr := plantask.New(ctx, &plantask.Config{Backend: ptBE, BaseDir: baseDir})
 			if perr != nil {
-				return nil, nil, fmt.Errorf("plantask: %w", perr)
+				return nil, nil, toolSearchActive, fmt.Errorf("plantask: %w", perr)
 			}
 			extraHandlers = append(extraHandlers, pt)
 			if logger != nil {
@@ -247,7 +250,7 @@ func prependEinoMiddlewares(
 		}
 	}
 
-	return outTools, extraHandlers, nil
+	return outTools, extraHandlers, toolSearchActive, nil
 }
 
 func deepExtrasFromConfig(ma *config.MultiAgentConfig) (outputKey string, retry *adk.ModelRetryConfig, taskDesc func(context.Context, []adk.Agent) (string, error)) {

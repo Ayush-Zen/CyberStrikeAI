@@ -96,7 +96,7 @@ func RunEinoSingleChatModelAgent(
 		return nil, err
 	}
 
-	mainToolsForCfg, mainOrchestratorPre, err := prependEinoMiddlewares(ctx, &ma.EinoMiddleware, einoMWMain, mainTools, einoLoc, skillsRoot, conversationID, logger)
+	mainToolsForCfg, mainOrchestratorPre, singleToolSearchActive, err := prependEinoMiddlewares(ctx, &ma.EinoMiddleware, einoMWMain, mainTools, einoLoc, skillsRoot, conversationID, logger)
 	if err != nil {
 		return nil, fmt.Errorf("eino single eino 中间件: %w", err)
 	}
@@ -178,22 +178,15 @@ func RunEinoSingleChatModelAgent(
 		},
 		EmitInternalEvents: true,
 	}
-	ins := injectToolNamesOnlyInstruction(ctx, ag.EinoSingleAgentSystemInstruction(), mainTools)
+	ins := injectToolNamesOnlyInstruction(ctx, ag.EinoSingleAgentSystemInstruction(), mainTools, singleToolSearchActive)
 	if logger != nil {
 		names := collectToolNames(ctx, mainTools)
 		mountedNames := collectToolNames(ctx, mainToolsForCfg)
-		hasToolSearch := false
-		for _, n := range names {
-			if strings.EqualFold(strings.TrimSpace(n), "tool_search") {
-				hasToolSearch = true
-				break
-			}
-		}
 		logger.Info("eino tool-name injection",
 			zap.String("scope", "eino_single"),
 			zap.Int("tool_names", len(names)),
 			zap.Int("mounted_tool_names", len(mountedNames)),
-			zap.Bool("has_tool_search", hasToolSearch),
+			zap.Bool("tool_search_middleware", singleToolSearchActive),
 		)
 	}
 
