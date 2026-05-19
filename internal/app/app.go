@@ -56,6 +56,7 @@ type App struct {
 	robotMu            sync.Mutex                // 保护钉钉/飞书长连接的 cancel
 	dingCancel         context.CancelFunc        // 钉钉 Stream 取消函数，用于配置变更时重启
 	larkCancel         context.CancelFunc        // 飞书长连接取消函数，用于配置变更时重启
+	wechatCancel       context.CancelFunc        // 微信 iLink 长轮询取消函数
 	c2Manager          *c2.Manager               // C2 管理器（未启用 C2 时为 nil）
 	c2Watchdog         *c2.SessionWatchdog       // C2 会话看门狗
 	c2WatchdogCancel   context.CancelFunc        // 看门狗取消函数
@@ -449,8 +450,10 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		configHandler.SetRetrieverUpdater(knowledgeRetriever)
 	}
 
-	// 设置机器人连接重启器，前端应用配置后无需重启服务即可使钉钉/飞书新配置生效
+	// 设置机器人连接重启器，前端应用配置后无需重启服务即可使钉钉/飞书/微信新配置生效
 	configHandler.SetRobotRestarter(app)
+
+	wechatRobotHandler := handler.NewWechatRobotHandler(cfg, configHandler, log.Logger)
 
 	configHandler.SetC2Runtime(app)
 	configHandler.SetC2ToolRegistrar(func() error {
@@ -469,6 +472,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		notificationHandler,
 		conversationHandler,
 		robotHandler,
+		wechatRobotHandler,
 		groupHandler,
 		configHandler,
 		externalMCPHandler,
@@ -675,9 +679,14 @@ func (a *App) startRobotConnections() {
 		a.dingCancel = cancel
 		go robot.StartDing(ctx, cfg.Robots, a.robotHandler, a.logger.Logger)
 	}
+	if cfg.Robots.Wechat.Enabled && cfg.Robots.Wechat.BotToken != "" {
+		ctx, cancel := context.WithCancel(context.Background())
+		a.wechatCancel = cancel
+		go robot.StartWechat(ctx, cfg.Robots, a.robotHandler, cfg.Version, a.logger.Logger)
+	}
 }
 
-// RestartRobotConnections 重启钉钉/飞书长连接，使前端应用配置后立即生效（实现 handler.RobotRestarter）
+// RestartRobotConnections 重启钉钉/飞书/微信长连接，使前端应用配置后立即生效（实现 handler.RobotRestarter）
 func (a *App) RestartRobotConnections() {
 	a.robotMu.Lock()
 	if a.dingCancel != nil {
@@ -687,6 +696,10 @@ func (a *App) RestartRobotConnections() {
 	if a.larkCancel != nil {
 		a.larkCancel()
 		a.larkCancel = nil
+	}
+	if a.wechatCancel != nil {
+		a.wechatCancel()
+		a.wechatCancel = nil
 	}
 	a.robotMu.Unlock()
 	// 给旧 goroutine 一点时间退出
@@ -703,6 +716,7 @@ func setupRoutes(
 	notificationHandler *handler.NotificationHandler,
 	conversationHandler *handler.ConversationHandler,
 	robotHandler *handler.RobotHandler,
+	wechatRobotHandler *handler.WechatRobotHandler,
 	groupHandler *handler.GroupHandler,
 	configHandler *handler.ConfigHandler,
 	externalMCPHandler *handler.ExternalMCPHandler,
@@ -750,6 +764,12 @@ func setupRoutes(
 	{
 		// 机器人测试（需登录）：POST /api/robot/test，body: {"platform":"dingtalk","user_id":"test","text":"帮助"}，用于验证机器人逻辑
 		protected.POST("/robot/test", robotHandler.HandleRobotTest)
+
+		// 微信 iLink 扫码绑定（需登录）
+		protected.POST("/robot/wechat/qrcode", wechatRobotHandler.HandleWechatQRCode)
+		protected.GET("/robot/wechat/qrcode/status", wechatRobotHandler.HandleWechatQRCodeStatus)
+		protected.POST("/robot/wechat/qrcode/verify", wechatRobotHandler.HandleWechatVerifyCode)
+		protected.GET("/robot/wechat/status", wechatRobotHandler.HandleWechatStatus)
 
 		// Agent Loop
 		protected.POST("/agent-loop", agentHandler.AgentLoop)

@@ -206,6 +206,25 @@ func (h *ConfigHandler) SetRobotRestarter(restarter RobotRestarter) {
 	h.robotRestarter = restarter
 }
 
+// ApplyWechatRobotBinding 微信 iLink 扫码绑定成功后写入配置并重启机器人连接
+func (h *ConfigHandler) ApplyWechatRobotBinding(wc config.RobotWechatConfig) error {
+	h.mu.Lock()
+	wc.Enabled = true
+	h.config.Robots.Wechat = wc
+	h.mu.Unlock()
+	if err := h.saveConfig(); err != nil {
+		return err
+	}
+	if h.robotRestarter != nil {
+		h.robotRestarter.RestartRobotConnections()
+	}
+	h.logger.Info("微信机器人绑定已保存",
+		zap.String("ilink_bot_id", wc.ILinkBotID),
+		zap.Bool("enabled", wc.Enabled),
+	)
+	return nil
+}
+
 // GetConfigResponse 获取配置响应
 type GetConfigResponse struct {
 	OpenAI     config.OpenAIConfig     `json:"openai"`
@@ -735,6 +754,7 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 	if req.Robots != nil {
 		h.config.Robots = *req.Robots
 		h.logger.Info("更新机器人配置",
+			zap.Bool("wechat_enabled", h.config.Robots.Wechat.Enabled),
 			zap.Bool("wecom_enabled", h.config.Robots.Wecom.Enabled),
 			zap.Bool("dingtalk_enabled", h.config.Robots.Dingtalk.Enabled),
 			zap.Bool("lark_enabled", h.config.Robots.Lark.Enabled),
@@ -1480,6 +1500,15 @@ func updateRobotsConfig(doc *yaml.Node, cfg config.RobotsConfig) {
 		sessionNode := ensureMap(robotsNode, "session")
 		setBoolInMap(sessionNode, "strict_user_identity", *cfg.Session.StrictUserIdentity)
 	}
+
+	wechatNode := ensureMap(robotsNode, "wechat")
+	setBoolInMap(wechatNode, "enabled", cfg.Wechat.Enabled)
+	setStringInMap(wechatNode, "bot_token", cfg.Wechat.BotToken)
+	setStringInMap(wechatNode, "ilink_bot_id", cfg.Wechat.ILinkBotID)
+	setStringInMap(wechatNode, "ilink_user_id", cfg.Wechat.ILinkUserID)
+	setStringInMap(wechatNode, "base_url", cfg.Wechat.BaseURL)
+	setStringInMap(wechatNode, "bot_type", cfg.Wechat.BotType)
+	setStringInMap(wechatNode, "bot_agent", cfg.Wechat.BotAgent)
 
 	wecomNode := ensureMap(robotsNode, "wecom")
 	setBoolInMap(wecomNode, "enabled", cfg.Wecom.Enabled)
