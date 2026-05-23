@@ -842,6 +842,8 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform, con
 				conversationID, curMsg, curHist, roleTools, progressCallback, nil,
 			)
 			if errMA == nil {
+				// 成功后重置 transient 重试窗口，下一次分段从第 1 次重试开始。
+				transientRunAttempts = 0
 				break
 			}
 			if handled, _ := h.handleEinoTransientRetryContinue(
@@ -873,6 +875,8 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform, con
 				h.agentsMarkdownDir, robotMode, nil,
 			)
 			if errMA == nil {
+				// 成功后重置 transient 重试窗口，下一次分段从第 1 次重试开始。
+				transientRunAttempts = 0
 				break
 			}
 			if handled, _ := h.handleEinoTransientRetryContinue(
